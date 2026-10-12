@@ -19,6 +19,8 @@ export interface PlayOpts {
   volume?: number;
   /** -1 (left) .. 1 (right) — positional ambient sounds */
   pan?: number;
+  /** Fixed left/right attenuation for a mono source (DirectSound-style balance). */
+  stereoGains?: readonly [number, number];
 }
 
 /** a single playback — crickets hold onto it to avoid re-firing mid-sound */
@@ -218,7 +220,9 @@ export class TimedAudio implements AudioSink {
     // in ticks, as Clock.sleep is and for its reason: in ms against a clock read
     // in whole ms, a clip ended a tick apart by where the ticks fell (#542)
     const end = opts?.loop ? Number.POSITIVE_INFINITY : ticksAt(this.now()) + ticksFor(ms);
-    this.endsAt[channel] = end;
+    // An overlapping play (a soundloop, a cricket, a V5 film effect) does not
+    // take the channel, as WebAudioSink does not make it the channel's play
+    if (!opts?.overlap) this.endsAt[channel] = end;
     const handle = this.inner.play(channel, audio, opts);
     let stopped = false;
     const nominal = this.nominal;
@@ -231,7 +235,9 @@ export class TimedAudio implements AudioSink {
     // Compared by which play it was, every loop read the other as its
     // replacement, called itself done, and was started again every tick — the
     // sinking's deck loop, 270 copies deep.
-    const over = (): boolean => ticksAt(this.now()) >= end || this.endsAt[channel] !== end;
+    // An overlapping play is never replaced: it only ends or is stopped.
+    const over = (): boolean =>
+      ticksAt(this.now()) >= end || (!opts?.overlap && this.endsAt[channel] !== end);
     return {
       get done(): boolean {
         return stopped || (nominal() ? over() : handle.done);
@@ -456,8 +462,14 @@ export class WebAudioSink implements AudioSink {
 
   play(channel: AudioChannel, audio: DecodedAudio, opts?: PlayOpts): PlayHandle {
     if (!opts?.overlap) this.halt(channel);
-    const buffer = this.ctx.createBuffer(1, audio.samples.length, audio.sampleRate);
-    buffer.copyToChannel(new Float32Array(audio.samples), 0);
+    const channels = opts?.stereoGains?.length ?? 1;
+    const buffer = this.ctx.createBuffer(channels, audio.samples.length, audio.sampleRate);
+    for (let c = 0; c < channels; c++) {
+      const samples = new Float32Array(audio.samples);
+      const gain = opts?.stereoGains?.[c] ?? 1;
+      if (gain !== 1) for (let i = 0; i < samples.length; i++) samples[i] *= gain;
+      buffer.copyToChannel(samples, c);
+    }
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
     src.loop = !!opts?.loop;
