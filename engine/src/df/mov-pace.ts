@@ -184,7 +184,8 @@ export function frameHoldMs(mov: MovSegment, frameIdx: number): number {
 /**
  * {@link frameHoldMs} in the unit the original counts it in, ticks. TI.EXE's
  * film loop (0x448b00) sets each frame's deadline to now + max(hold, floor)
- * (0x44aa2b) and spins on the tick clock until it passes (0x449263); it never
+ * (0x44aa2b) — or, on a flags-bit-3 frame past frame 0, the running deadline +
+ * max(hold, floor) (MovFrame.holdsDeadline, MoviePlayer.scheduleFrame) — and spins on the tick clock until it passes (0x449263); it never
  * goes through the `framerate` throttle, so a 1-tick film plays at 60 a second
  * (the smokestack's STACKUP.MOV). A player
  * that compares ticks rather than milliseconds holds a 1-tick frame for exactly
